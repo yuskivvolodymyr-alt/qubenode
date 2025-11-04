@@ -1,0 +1,12 @@
+{
+     "updated": "2025-11-04T21:00:00Z",
+     "validator": "qubeticsvaloper1tzk9f84cv2gmk3du3m9dpxcuph70sfj6uf6kld",
+     "totalDelegated": "2.4M",
+     "totalDelegatedRaw": 2400000000000,
+     "delegatorsCount": 147,
+     "commissionRate": "5.00%",
+     "commissionRateRaw": 0.05,
+     "isActive": true,
+     "jailed": false,
+     "status": "BOND_STATUS_BONDED"
+   } 
