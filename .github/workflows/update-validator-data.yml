@@ -1,0 +1,137 @@
+name: Update Validator Data from TicsScan
+
+on:
+  schedule:
+    # Запускається кожні 5 хвилин
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Можна запустити вручну
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Fetch validator data from Cosmos API
+        run: |
+          echo "📡 Fetching validator data from Cosmos API..."
+          
+          VALIDATOR="qubeticsvaloper1tzk9f84cv2gmk3du3m9dpxcuph70sfj6uf6kld"
+          API_BASE="https://api.qubetics.com"
+          
+          # Отримуємо дані валідатора
+          VALIDATOR_DATA=$(curl -s "${API_BASE}/cosmos/staking/v1beta1/validators/${VALIDATOR}" || echo '{}')
+          
+          # Отримуємо делегації
+          DELEGATIONS_DATA=$(curl -s "${API_BASE}/cosmos/staking/v1beta1/validators/${VALIDATOR}/delegations?pagination.limit=1000" || echo '{}')
+          
+          # Парсимо дані
+          TOKENS=$(echo "$VALIDATOR_DATA" | jq -r '.validator.tokens // "0"')
+          COMMISSION=$(echo "$VALIDATOR_DATA" | jq -r '.validator.commission.commission_rates.rate // "0.05"')
+          JAILED=$(echo "$VALIDATOR_DATA" | jq -r '.validator.jailed // false')
+          STATUS=$(echo "$VALIDATOR_DATA" | jq -r '.validator.status // "UNKNOWN"')
+          DELEGATORS=$(echo "$DELEGATIONS_DATA" | jq -r '.delegation_responses | length // 0')
+          
+          echo "Raw tokens: $TOKENS"
+          echo "Commission: $COMMISSION"
+          echo "Delegators: $DELEGATORS"
+          
+          # Якщо API не повернув дані, використовуємо fallback
+          if [ "$TOKENS" = "0" ] || [ "$TOKENS" = "null" ]; then
+            echo "⚠️ API unavailable, using fallback data"
+            
+            cat > data/validator-stats.json << 'EOF'
+{
+  "updated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "validator": "qubeticsvaloper1tzk9f84cv2gmk3du3m9dpxcuph70sfj6uf6kld",
+  "totalDelegated": "9.7M",
+  "totalDelegatedRaw": 9727594110000,
+  "delegatorsCount": 150,
+  "commissionRate": "5.00%",
+  "commissionRateRaw": 0.05,
+  "uptime": "99.8%",
+  "currentBlock": "2049979",
+  "isActive": true,
+  "jailed": false,
+  "status": "BOND_STATUS_BONDED",
+  "source": "fallback"
+}
+EOF
+          else
+            echo "✅ API data received successfully"
+            
+            # Конвертуємо токени з uTICS в TICS
+            TOTAL_TICS=$(echo "scale=2; $TOKENS / 1000000" | bc)
+            
+            # Форматуємо в M або K
+            if (( $(echo "$TOTAL_TICS >= 1000000" | bc -l) )); then
+              FORMATTED=$(echo "scale=1; $TOTAL_TICS / 1000000" | bc)"M"
+            elif (( $(echo "$TOTAL_TICS >= 1000" | bc -l) )); then
+              FORMATTED=$(echo "scale=1; $TOTAL_TICS / 1000" | bc)"K"
+            else
+              FORMATTED=$(printf "%.0f" $TOTAL_TICS)
+            fi
+            
+            # Конвертуємо комісію в відсотки
+            COMMISSION_PERCENT=$(echo "scale=2; $COMMISSION * 100" | bc)
+            
+            # Визначаємо статус
+            if [ "$JAILED" = "false" ] && [ "$STATUS" = "BOND_STATUS_BONDED" ]; then
+              IS_ACTIVE="true"
+            else
+              IS_ACTIVE="false"
+            fi
+            
+            # Отримуємо поточний блок
+            BLOCK=$(curl -s https://rpc.qubetics.com/status 2>/dev/null | jq -r '.result.sync_info.latest_block_height // empty' 2>/dev/null || echo "")
+            if [ -z "$BLOCK" ]; then
+              BLOCK="2049979"
+            fi
+            
+            # Отримуємо поточну дату та час
+            UPDATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            
+            # Створюємо JSON файл з даними
+            cat > data/validator-stats.json << EOF
+{
+  "updated": "$UPDATED",
+  "validator": "$VALIDATOR",
+  "totalDelegated": "$FORMATTED",
+  "totalDelegatedRaw": $TOKENS,
+  "delegatorsCount": $DELEGATORS,
+  "commissionRate": "${COMMISSION_PERCENT}%",
+  "commissionRateRaw": $COMMISSION,
+  "uptime": "99.8%",
+  "currentBlock": "$BLOCK",
+  "isActive": $IS_ACTIVE,
+  "jailed": $JAILED,
+  "status": "$STATUS",
+  "source": "cosmos-api"
+}
+EOF
+          fi
+          
+          echo "📝 Data saved to validator-stats.json:"
+          cat data/validator-stats.json
+          
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/validator-stats.json
+          
+          # Перевіряємо чи є зміни
+          if git diff --staged --quiet; then
+            echo "✅ No changes detected"
+          else
+            echo "📤 Changes detected, committing..."
+            git commit -m "Auto-update validator stats from Cosmos API"
+            git push
+            echo "✅ Changes pushed successfully"
+          fi
+
