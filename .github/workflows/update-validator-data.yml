@@ -160,13 +160,18 @@ jobs:
       
       - name: Get current block from API
         run: |
-          # Отримуємо поточний блок з RPC
-          BLOCK=$(curl -s https://rpc.qubetics.com/status | jq -r '.result.sync_info.latest_block_height // "1969775"')
+          # Отримуємо поточний блок з RPC (якщо доступний)
+          BLOCK=$(curl -s https://rpc.qubetics.com/status 2>/dev/null | jq -r '.result.sync_info.latest_block_height // empty' 2>/dev/null || echo "")
+          
+          if [ -z "$BLOCK" ]; then
+            echo "⚠️ Could not fetch block from RPC, using default"
+            BLOCK="1969775"
+          fi
+          
           echo "Current block: $BLOCK"
           
           # Додаємо до JSON
-          cat data/validator-stats.json | jq --arg block "$BLOCK" '. + {currentBlock: $block}' > temp.json
-          mv temp.json data/validator-stats.json
+          cat data/validator-stats.json | jq --arg block "$BLOCK" '. + {currentBlock: $block}' > temp.json && mv temp.json data/validator-stats.json || true
       
       - name: Commit and push if changed
         run: |
